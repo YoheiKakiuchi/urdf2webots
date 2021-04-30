@@ -146,3 +146,12 @@ def rotateVector(vector, rotation):
     v.append(vector[0] * matrix[3] + vector[1] * matrix[4] + vector[2] * matrix[5])
     v.append(vector[0] * matrix[6] + vector[1] * matrix[7] + vector[2] * matrix[8])
     return v
+
+def multiplyTransform(trans1, rotation1, trans2, rotation2):
+    """Multiply transforms(translation and rotation)"""
+    mat1 = matrixFromRotation(rotation1)
+    mat2 = matrixFromRotation(rotation2)
+    mat = multiplyMatrix(mat1, mat2)
+    vec = rotateVector(trans2, mat1)
+
+    return ( [vec[0] + trans1[0], vec[1] + trans1[1], vec[2] + trans1[2]], rotationFromMatrix(mat) )

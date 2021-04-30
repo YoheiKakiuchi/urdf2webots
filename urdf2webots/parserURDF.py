@@ -15,7 +15,7 @@ except ImportError as e:
 import numbers
 
 from urdf2webots.gazebo_materials import materials
-from urdf2webots.math_utils import convertRPYtoEulerAxis
+from urdf2webots.math_utils import convertRPYtoEulerAxis, multiplyTransform
 
 try:
     from collada import Collada, lineset
@@ -238,15 +238,33 @@ class Joint():
         self.limit = Limit()
         self.safety = Safety()
 
+class SensorBase(object):
+    """Define base class of Sensor"""
+    def __init__(self, name):
+        """Initializatization."""
+        self.name = name
+        self.pose = None
 
-class IMU():
+    def setPose(self, pose):
+        self.pose = pose
+
+    def export_pose(self, file, indentationLevel):
+        """Export urdf_pose as VRML translation and rotation"""
+        indent = '  '
+        if self.pose:
+            file.write(indentationLevel * indent + '  translation %12.12f %12.12f %12.12f\n' %
+                       (self.pose[0][0], self.pose[0][1], self.pose[0][2]))
+            file.write(indentationLevel * indent + '  rotation %12.12f %12.12f %12.12f %12.12f\n'%
+                       (self.pose[1][0], self.pose[1][1], self.pose[1][2], self.pose[1][3] ))
+
+class IMU(SensorBase):
     """Define an IMU sensor."""
 
     list = []
 
     def __init__(self):
         """Initializatization."""
-        self.name = 'imu'
+        super(IMU, self).__init__('imu')
         self.gaussianNoise = 0
         self.parentLink = None
 
@@ -255,44 +273,51 @@ class IMU():
         indent = '  '
         file.write(indentationLevel * indent + 'Accelerometer {\n')
         file.write(indentationLevel * indent + '  name "%s accelerometer"\n' % self.name)
+        self.export_pose(file, indentationLevel)
         if self.gaussianNoise > 0:
             file.write(indentationLevel * indent + '  lookupTable [-100 -100 %lf, 100 100 %lf]\n' %
                        (-self.gaussianNoise / 100.0, self.gaussianNoise / 100.0))
         file.write(indentationLevel * indent + '}\n')
         file.write(indentationLevel * indent + 'Gyro {\n')
         file.write(indentationLevel * indent + '  name "%s gyro"\n' % self.name)
+        self.export_pose(file, indentationLevel)
         if self.gaussianNoise > 0:
             file.write(indentationLevel * indent + '  lookupTable [-100 -100 %lf, 100 100 %lf]\n' %
                        (-self.gaussianNoise / 100.0, self.gaussianNoise / 100.0))
         file.write(indentationLevel * indent + '}\n')
         file.write(indentationLevel * indent + 'Compass {\n')
         file.write(indentationLevel * indent + '  name "%s compass"\n' % self.name)
+        self.export_pose(file, indentationLevel)
         if self.gaussianNoise > 0:
             file.write(indentationLevel * indent + '  lookupTable [-1 -1 %lf, 1 1 %lf]\n' %
                        (-self.gaussianNoise, self.gaussianNoise))
         file.write(indentationLevel * indent + '}\n')
 
 
-class Camera():
+class Camera(SensorBase):
     """Define a camera sensor."""
 
     list = []
 
     def __init__(self):
         """Initializatization."""
-        self.name = 'camera'
+        super(Camera, self).__init__('camera')
         self.fov = None
         self.width = None
         self.height = None
         self.noise = None
 
+    def setPose(self, pose):
+        trans = [0, 0, 0]
+        rot   = [0.57735026919, -0.57735026919, -0.57735026919, 2.0943951024]
+        self.pose = multiplyTransform(pose[0], pose[1], trans, rot)
+
     def export(self, file, indentationLevel):
         """Export this camera."""
         indent = '  '
         file.write(indentationLevel * indent + 'Camera {\n')
-        # rotation to convert from REP103 to webots viewport
-        file.write(indentationLevel * indent + '  rotation 1.0 0.0 0.0 3.141591\n')
         file.write(indentationLevel * indent + '  name "%s"\n' % self.name)
+        self.export_pose(file, indentationLevel)
         if self.fov:
             file.write(indentationLevel * indent + '  fieldOfView %lf\n' % self.fov)
         if self.width:
@@ -304,14 +329,14 @@ class Camera():
         file.write(indentationLevel * indent + '}\n')
 
 
-class Lidar():
+class Lidar(SensorBase):
     """Define a lidar sensor."""
 
     list = []
 
     def __init__(self):
         """Initializatization."""
-        self.name = 'lidar'
+        super(Lidar, self).__init__('lidar')
         self.fov = None
         self.verticalFieldOfView = None
         self.horizontalResolution = None
@@ -326,6 +351,7 @@ class Lidar():
         indent = '  '
         file.write(indentationLevel * indent + 'Lidar {\n')
         file.write(indentationLevel * indent + '  name "%s"\n' % self.name)
+        self.export_pose(file, indentationLevel)
         if self.fov:
             file.write(indentationLevel * indent + '  fieldOfView %lf\n' % self.fov)
         if self.verticalFieldOfView:
@@ -618,6 +644,13 @@ def getRotation(node, isCylinder=False):
     else:
         return convertRPYtoEulerAxis(rotation, False)
 
+def getPose(node):
+    if hasElement(node, 'pose'):
+        str_pose = node.getElementsByTagName('pose')[0].firstChild.nodeValue.split()
+        translation = [float(str_pose[0]), float(str_pose[1]), float(str_pose[2])]
+        rotation =    [float(str_pose[3]), float(str_pose[4]), float(str_pose[5])]
+
+        return (translation, convertRPYtoEulerAxis(rotation))
 
 def getInertia(node):
     """Parse inertia of a link."""
@@ -936,6 +969,9 @@ def parseGazeboElement(element, parentLink, linkList):
                 imu.name = plugin.getElementsByTagName('topicName')[0].firstChild.nodeValue
             if hasElement(plugin, 'gaussianNoise'):
                 imu.gaussianNoise = float(plugin.getElementsByTagName('gaussianNoise')[0].firstChild.nodeValue)
+            pose = getPose(element)
+            if pose:
+                imu.setPose(pose)
             IMU.list.append(imu)
         elif plugin.hasAttribute('filename') and plugin.getAttribute('filename').startswith('libgazebo_ros_f3d'):
             if hasElement(plugin, "bodyName"):
@@ -968,6 +1004,9 @@ def parseGazeboElement(element, parentLink, linkList):
                 noiseElement = sensorElement.getElementsByTagName('noise')[0]
                 if hasElement(noiseElement, 'stddev'):
                     camera.noise = float(noiseElement.getElementsByTagName('stddev')[0].firstChild.nodeValue)
+            pose = getPose(element)
+            if pose:
+                camera.setPose(pose)
             Camera.list.append(camera)
         elif sensorElement.getAttribute('type') == 'ray' or sensorElement.getAttribute('type') == 'gpu_ray':
             lidar = Lidar()
@@ -1009,4 +1048,7 @@ def parseGazeboElement(element, parentLink, linkList):
                         lidar.noise = float(noiseElement.getElementsByTagName('stddev')[0].firstChild.nodeValue)
                         if lidar.maxRange:
                             lidar.noise /= lidar.maxRange
+            pose = getPose(element)
+            if pose:
+                lidar.setPose(pose)
             Lidar.list.append(lidar)
